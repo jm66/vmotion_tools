@@ -10,16 +10,35 @@ def find_vm(name, con):
   except VIException:
     return None
 
-def find_host(name, server):
+def getResourcePoolByProperty(server, prop, value):
+  mor = None
+  for rp_mor, rp_path in server.get_resource_pools().items():
+    p = server._get_object_properties(rp_mor, [prop])
+    if p.PropSet[0].Val == value: mor = rp_mor; break 
+  return mor
+
+def getResourcePoolByHost(server, hostname):
   try:
-    t_hs = [k for k, v in server.get_hosts().items() if v == name]
-    if len(t_hs) > 0:
-      return t_hs[0]
+    t_hs_mor = None
+    rp_mor = None
+    t_hs_a = [k for k, v in server.get_hosts().items() if v == hostname]
+    if len(t_hs_a) > 0:
+      t_hs_mor = t_hs_a[0]
+      prop = server._get_object_properties(t_hs_mor,['parent'])
+      parent = prop.PropSet[0].Val
+      rp_mor = getResourcePoolByProperty(server,"parent", parent)
+      if rp_mor is not None:
+        logger.debug('Found resource pool %s for %s' %(rp_mor, t_hs_mor))
+        return rp_mor, t_hs_mor 
+      else:
+        logger.error('Did not find resource pool for host %s' %hostname)
+        return None, None
     else:
-      return None
-  except VIException, e:
-    logger.error(e)
-    return None
+      logger.error('Hostname does not exist.')
+      return None. None
+  except VIException as exc:
+    logger.error('An error occurred - %s' % exc)
+    return None, None
         
 def find_datastore(name, server):
   try:
@@ -37,12 +56,12 @@ def migrate_vm(vm, thost, server):
     vm_name = vm.get_property('name')
     logger.info("Migrating %s to %s: " %(vm_name, thost))
     logger.debug("Validating whether the host %s exists" % thost)
-    hid = find_host(thost, server)
+    rp_mor, hid = getResourcePoolByHost(server, thost)
 
     if hid:
       logger.debug("Found %s. It has host id %s" % (thost, hid))
       logger.info('Initializing migration of %s to %s (%s)' %(vm_name, thost, hid))
-      vm.migrate(vm, host=hid)
+      vm.migrate(vm, host=hid, resource_pool=rp_mor)
       logger.info("Successfully migrated %s to %s" %(vm_name, thost))
     else:
       logger.error("Host not found. Verify hostname and try again.")   
@@ -60,11 +79,11 @@ def relocate_vm(vm, tds, thost, server):
       logger.debug("Found %s. It has datastire id %s" % (tds, did))
       if thost:
         logger.debug ("Validating whether the host %s exists" % thost)
-        hid = find_host(thost, server)
+        rp_mor, hid = getResourcePoolByHost(server, thost)
         if hid:
           logger.debug("Found %s. It has host id %s" % (thost, hid))
           logger.info("Initilizing relocation of %s to %s & %s" %(vm_name, tds, thost))
-          vm.relocate(vm, datastore=did, host=hid)
+          vm.relocate(vm, datastore=did, host=hid, resource_pool=rp_mor)
           logger.info("Successfully relocated %s to %s %s" %(vm_name, tds, thost ))
         else:
           logger.error("Host not found. Verify hostname and try again.")
